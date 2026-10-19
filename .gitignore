@@ -1,0 +1,18 @@
+.gradle/
+.kotlin/
+**/build/
+local.properties
+*.jks
+*.keystore
+.idea/
+**/__pycache__/
+*.pyc
+*.exe
+*.apk
+*.zip
+*.log
+.env
+.env.*
+!.env.example
+# Local experiments are not part of the v0.1 source release.
+examples/control-lab/

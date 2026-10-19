@@ -1,0 +1,97 @@
+name: Android verification
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-lint-test:
+    name: Build, lint, unit tests, and instrumentation compilation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+
+      # setup-gradle validates committed wrapper JARs before executing Gradle.
+      - name: Set up Gradle and validate wrapper
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Require the committed Gradle wrapper
+        shell: bash
+        run: |
+          test -f gradlew
+          test -f gradlew.bat
+          test -f gradle/wrapper/gradle-wrapper.jar
+          test -f gradle/wrapper/gradle-wrapper.properties
+          chmod +x gradlew
+
+      - name: Build app, lint, run unit tests, and compile device tests
+        run: >-
+          ./gradlew --no-daemon --stacktrace --continue
+          :app:assembleDebug :app:lintDebug :app:testDebugUnitTest
+          :app:assembleDebugAndroidTest
+
+      - name: Require executed unit tests
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          reports = list(Path('app/build/test-results/testDebugUnitTest').glob('TEST-*.xml'))
+          assert reports, 'No unit-test XML reports: NO-SOURCE is not a passing test suite'
+          cases = [case for report in reports for case in ET.parse(report).iter('testcase')]
+          executed = [case for case in cases if case.find('skipped') is None]
+          assert executed, 'No unit tests actually executed'
+          assert not any(case.find('failure') is not None or case.find('error') is not None for case in executed), 'Unit tests failed'
+          print(f'{len(executed)} unit tests executed. Instrumentation tests were compiled only; no device was run.')
+          PY
+
+      - name: Upload app-only debug APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: gestrin-hub-debug-${{ github.run_number }}
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload verification reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: android-verification-${{ github.run_number }}
+          path: |
+            app/build/reports/lint-results-debug.*
+            app/build/reports/tests/testDebugUnitTest/
+            app/build/test-results/testDebugUnitTest/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Report device validation boundary
+        if: always()
+        shell: bash
+        run: |
+          printf '%s\n' '## Android verification scope' >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' 'Instrumentation compilation is not execution. This job has no emulator or physical device.' >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' 'Room/UI instrumentation, APK installation, runtime downloads, and external game runners still require device evidence; see docs/08-verification-and-release.md.' >> "$GITHUB_STEP_SUMMARY"
