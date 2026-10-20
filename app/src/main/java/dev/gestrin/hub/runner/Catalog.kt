@@ -29,7 +29,7 @@ data class RunnerSpec(
 object Catalog {
     val runners: List<RunnerSpec> = listOf(
         RunnerSpec(RunnerId.WINLATOR, "Winlator", "https://github.com/brunodev85/winlator/releases", setOf("com.winlator")),
-        RunnerSpec(RunnerId.KIRIKIROID2, "Kirikiroid2", "https://github.com/zeas2/Kirikiroid2/releases", setOf("org.tvp.kirikiri2")),
+        RunnerSpec(RunnerId.KIRIKIROID2, "Kirikiroid2", "https://github.com/zeas2/Kirikiroid2/releases", setOf("org.tvp.kirikiri2", "org.tvp.kirikiri2_free_10309")),
         RunnerSpec(RunnerId.PPSSPP, "PPSSPP", "https://www.ppsspp.org/download/", setOf("org.ppsspp.ppsspp")),
         RunnerSpec(RunnerId.VITA3K, "Vita3K", "https://github.com/Vita3K/Vita3K/releases/tag/continuous", setOf("org.vita3k.emulator")),
         RunnerSpec(RunnerId.EDEN, "Eden", "https://git.eden-emu.dev/eden-emu/eden/releases", setOf("dev.eden.eden_emulator", "dev.legacy.eden_emulator")),
@@ -73,6 +73,22 @@ internal object RunnerSecurity {
     fun checkSize(size: Long) {
         if (size <= 0 || size > MAX_APK_BYTES) throw IOException("APK size $size is outside 1..$MAX_APK_BYTES bytes")
     }
+    fun approvedSize(declared: Long, observed: Long): Long {
+        if (declared > 0 && observed > 0 && declared != observed) throw IOException("Asset size disagrees with official release metadata")
+        val size = if (observed > 0) observed else declared
+        if (size > 0) checkSize(size)
+        return if (size > 0) size else -1L
+    }
+    fun completedSize(expected: Long, actual: Long): Long {
+        checkSize(actual)
+        if (expected > 0 && expected != actual) throw IOException("Downloaded APK size does not match approved size")
+        return actual
+    }
+    fun minimumTarget(sdk: Int) = when { sdk >= 35 -> 24; sdk >= 34 -> 23; else -> 0 }
+    fun knownReleaseIssue(id: RunnerId, tag: String, sdk: Int): String? =
+        if (id == RunnerId.KIRIKIROID2 && tag == "1.3.9" && sdk >= 34)
+            "官方 Kirikiroid2 1.3.9 面向 API 11，Android 14 及以上无法新安装。请绑定兼容的本机应用，或导入已适配系统的 APK。"
+        else null
 
     fun sha256(value: String): String {
         val hash = value.removePrefix("sha256:").trim().lowercase(Locale.ROOT)
@@ -181,13 +197,12 @@ internal object OfficialHttp {
             val length = if (c.responseCode == 206) {
                 c.getHeaderField("Content-Range")?.substringAfterLast('/')?.toLongOrNull() ?: -1L
             } else c.contentLengthLong
-            if (apk.size > 0 && length > 0 && apk.size != length) throw IOException("Asset size disagrees with official release metadata")
-            val size = if (length > 0) length else apk.size
-            RunnerSecurity.checkSize(size)
-            apk.copy(url = c.url.toString(), size = size)
+            val size = RunnerSecurity.approvedSize(apk.size, length)
+            // Keep the stable publisher URL, not a short-lived signed CDN redirect.
+            apk.copy(size = if (size > 0) size else -1L)
         }
         return try { probe("HEAD", false) } catch (e: OfficialHttpException) {
-            if (e.status != 405 && e.status != 501) throw e
+            if (e.status !in setOf(403, 405, 501)) throw e
             probe("GET", true)
         }
     }
@@ -316,12 +331,13 @@ internal object ReleaseResolver {
             else -> "https://$apiHost/repos/$repo/releases/latest"
         }
         val metadata = try { OfficialHttp.text(api, setOf(apiHost)) } catch (e: OfficialHttpException) {
-            if (id == RunnerId.EDEN || e.status !in setOf(403, 429)) throw e
+            if (id == RunnerId.EDEN || e.status !in setOf(403, 404, 429)) throw e
             return githubHtml(id, abis, sdk)
         }
         val release = JSONObject(metadata)
         if (release.optBoolean("draft") || (release.optBoolean("prerelease") && id != RunnerId.VITA3K)) throw IOException("Official latest release is not stable")
         val tag = release.getString("tag_name")
+        RunnerSecurity.knownReleaseIssue(id, tag, sdk)?.let { throw IOException(it) }
         val releaseName = release.optString("name").ifBlank { tag }
         val assets = release.optJSONArray("assets")
         val all = (0 until (assets?.length() ?: 0)).map { assets!!.getJSONObject(it) }
@@ -379,6 +395,7 @@ internal object ReleaseResolver {
         val url = chosen.getString("browser_download_url")
         checkAssetOrigin(id, url)
         val tag = URI(fragment).path.substringAfter("/releases/expanded_assets/")
+        RunnerSecurity.knownReleaseIssue(id, tag, sdk)?.let { throw IOException(it) }
         val hash = publishedHash(id, chosen, "", all)
         return OfficialHttp.preflight(id, ResolvedApk(tag, name, url, -1, hash))
     }

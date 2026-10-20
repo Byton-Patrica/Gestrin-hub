@@ -9,6 +9,7 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import org.junit.Before
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Rule
@@ -79,6 +80,20 @@ class MainActivityInstrumentedTest {
         } finally {
             compose.activity.getSharedPreferences("hub", 0).edit().putString("language", "zh").commit()
         }
+    }
+
+    @Test fun windowsGameOpensOptionsInsteadOfAutomaticallyLeavingTheHub() {
+        compose.runOnUiThread {
+            val vm = androidx.lifecycle.ViewModelProvider(compose.activity)[HubViewModel::class.java]
+            vm.state.value = vm.state.value.copy(games = listOf(dev.gestrin.hub.ui.GameItem(
+                "launch-regression", "Launch regression", "WINDOWS", "content://fixture/game.exe", false, false, null, 0
+            )))
+        }
+        compose.onNodeWithText("Launch regression").performClick()
+        compose.onNodeWithText("启动方式").performScrollTo().performClick()
+        compose.onNodeWithText("此项目需在运行器内选择游戏；不会自动跳转。").assertIsDisplayed()
+        compose.onNodeWithText("选择本机应用").assertIsDisplayed()
+        compose.onNodeWithText("交给已选运行器").assertDoesNotExist()
     }
 
     // Clickable merged navigation nodes work for both NavigationBarItem and NavigationRailItem.

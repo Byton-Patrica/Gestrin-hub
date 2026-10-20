@@ -14,6 +14,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -24,6 +25,9 @@ import dev.gestrin.hub.ui.*
 import dev.gestrin.hub.ui.Text
 import dev.gestrin.hub.ui.Icon
 import dev.gestrin.hub.runner.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -44,6 +48,26 @@ class MainActivity : ComponentActivity() {
             val unknown by vm.unknown.collectAsStateWithLifecycle()
             var coverTarget by remember { mutableStateOf<GameItem?>(null) }
             var logTarget by remember { mutableStateOf<GameItem?>(null) }
+            var launchTarget by rememberSaveable { mutableStateOf<String?>(null) }
+            var bindingPlatform by rememberSaveable { mutableStateOf<String?>(null) }
+            var apkTarget by rememberSaveable { mutableStateOf<String?>(null) }
+            var localApps by remember { mutableStateOf<List<LocalRunner>>(emptyList()) }
+            var appsLoading by remember { mutableStateOf(false) }
+            var localRevision by remember { mutableIntStateOf(0) }
+            LaunchedEffect(bindingPlatform) {
+                if (bindingPlatform != null) {
+                    appsLoading = true
+                    localApps = emptyList()
+                    try { localApps = withContext(Dispatchers.IO) { installers.local.list() } }
+                    catch (e: CancellationException) { throw e }
+                    catch (_: Exception) { vm.dialog.value = "操作未完成" to "无法读取本机应用，请稍后重试。" }
+                    finally { appsLoading = false }
+                }
+            }
+            val apkPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+                val id = apkTarget; apkTarget = null
+                if (uri != null && id != null) installers.importApk(this@MainActivity, id, uri) { vm.dialog.value = "运行器安装" to it }
+            }
             val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let { vm.importSource(it, false) } }
             val directoryPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri -> uri?.let { vm.importSource(it, true) } }
             val coverPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) coverTarget?.let { vm.cover(it, uri) } }
@@ -63,7 +87,7 @@ class MainActivity : ComponentActivity() {
                 importFile = { filePicker.launch(arrayOf("*/*")) }, importDirectory = { directoryPicker.launch(null) }, cancelImport = vm::cancelImport,
                 favorite = vm::favorite, save = vm::save, delete = vm::delete,
                 cover = { coverTarget = it; coverPicker.launch(arrayOf("image/*")) },
-                launch = { item -> val pkg = installers.packageFor(item.platform); if (pkg == null) vm.tell("先到运行器中心安装对应应用") else vm.launch(item, pkg) },
+                launch = { item -> launchTarget = item.id },
                 bindTitle = vm::bindTitle,
                 record = { item, outcome -> vm.record(item, outcome, installers.packageFor(item.platform), runners.find { it.platform == item.platform }?.version) },
                 diagnose = { vm.diagnose(it, installers.packageFor(it.platform)) }, log = { logTarget = it; logPicker.launch(arrayOf("text/*", "application/octet-stream")) },
@@ -72,10 +96,25 @@ class MainActivity : ComponentActivity() {
                 cancelDownload = installers::cancel,
                 openRunner = { id -> installers.open(this@MainActivity, id) { vm.tell(it) } },
                 official = { id -> startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(Catalog.get(RunnerId.valueOf(id)).officialPage))) },
-                export = { exportPicker.launch("gestrin-library.json") }, restore = { restorePicker.launch(arrayOf("application/json", "text/*")) }, toggleDark = vm::toggleDark, toggleMotion = vm::toggleMotion, selectLanguage = vm::selectLanguage
+                export = { exportPicker.launch("gestrin-library.json") }, restore = { restorePicker.launch(arrayOf("application/json", "text/*")) }, toggleDark = vm::toggleDark, toggleMotion = vm::toggleMotion, selectLanguage = vm::selectLanguage,
+                chooseLocal = { bindingPlatform = it }, localApk = { apkTarget = it; apkPicker.launch(arrayOf("application/vnd.android.package-archive", "application/octet-stream")) }
             )
             HubScreen(state, actions)
             CompositionLocalProvider(LocalLanguage provides state.language) { GestrinTheme(state.dark) {
+                state.games.find { it.id == launchTarget }?.let { game ->
+                    val selected = remember(game.platform, runners, localRevision) { installers.local.selected(game.platform) }
+                    if (bindingPlatform == null) LaunchDialog(game, selected,
+                        send = { launchTarget = null; selected?.let { vm.launch(game, it.packageName) } },
+                        chooser = { launchTarget = null; vm.chooseFile(game) },
+                        open = { launchTarget = null; selected?.let { vm.openRunner(it.packageName) } },
+                        bind = { bindingPlatform = game.platform }, close = { launchTarget = null })
+                }
+                bindingPlatform?.let { platform -> LocalRunnerDialog(localApps, appsLoading,
+                    choose = { pkg ->
+                        try { installers.bind(platform, pkg); localRevision++ }
+                        catch (_: Exception) { vm.dialog.value = "操作未完成" to "所选应用已不可用，请重新选择。" }
+                        bindingPlatform = null
+                    }, close = { bindingPlatform = null }) }
                 if (dialog != null) AlertDialog(
                     onDismissRequest = { vm.dialog.value = null },
                     title = { Text(dialog!!.first) },

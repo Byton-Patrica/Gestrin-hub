@@ -41,7 +41,7 @@ import dev.gestrin.hub.R
 val platformNames = linkedMapOf("WINDOWS" to "Windows", "XP3" to "XP3", "PSP" to "PSP", "VITA" to "PS Vita", "SWITCH" to "Switch")
 private val platformColors = mapOf("WINDOWS" to Color(0xFF8BB6DB), "XP3" to Color(0xFFD5ACCD), "PSP" to Color(0xFFB9D993), "VITA" to Color(0xFF9CB6E8), "SWITCH" to Color(0xFFE6AA91))
 data class GameItem(val id: String, val title: String, val platform: String, val uri: String, val directory: Boolean, val favorite: Boolean, val cover: String?, val lastOpened: Long, val titleId: String = "", val history: List<String> = emptyList())
-data class RunnerItem(val id: String, val name: String, val platform: String, val version: String?, val description: String, val status: String = "", val progress: Float? = null, val busy: Boolean = false, val ready: Boolean = false, val checksum: String? = null)
+data class RunnerItem(val id: String, val name: String, val platform: String, val version: String?, val description: String, val status: String = "", val progress: Float? = null, val busy: Boolean = false, val ready: Boolean = false, val checksum: String? = null, val localApp: String? = null)
 data class HubState(val games: List<GameItem> = emptyList(), val runners: List<RunnerItem> = emptyList(), val loading: Boolean = false, val message: String = "", val dark: Boolean = true, val reduceMotion: Boolean = false, val language: String = "zh")
 data class HubActions(
     val importFile: () -> Unit, val importDirectory: () -> Unit, val cancelImport: () -> Unit,
@@ -49,7 +49,8 @@ data class HubActions(
     val cover: (GameItem) -> Unit, val launch: (GameItem) -> Unit, val bindTitle: (GameItem, String) -> Unit,
     val record: (GameItem, String) -> Unit, val diagnose: (GameItem) -> Unit, val log: (GameItem) -> Unit,
     val install: (String) -> Unit, val updateRunner: (String) -> Unit, val cancelDownload: (String) -> Unit, val openRunner: (String) -> Unit, val official: (String) -> Unit,
-    val export: () -> Unit, val restore: () -> Unit, val toggleDark: () -> Unit, val toggleMotion: () -> Unit, val selectLanguage: (String) -> Unit
+    val export: () -> Unit, val restore: () -> Unit, val toggleDark: () -> Unit, val toggleMotion: () -> Unit, val selectLanguage: (String) -> Unit,
+    val chooseLocal: (String) -> Unit, val localApk: (String) -> Unit
 )
 
 @Composable
@@ -188,7 +189,7 @@ private fun Library(state: HubState, onSelect: (GameItem) -> Unit, favorite: (Ga
             OutlinedTextField(titleId, { titleId = it.uppercase().take(9) }, label = { Text("Vita 已安装标题 ID（可选）") }, placeholder = { Text("例如 PCSG00000") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             TextButton(onClick = { actions.bindTitle(game, titleId) }) { Text("保存标题关联") }
         }
-        Button(onClick = { actions.launch(game) }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Outlined.PlayArrow, null); Text(if ((game.platform in listOf("PSP", "SWITCH") && !game.directory) || (game.platform == "VITA" && game.titleId.isNotBlank())) "尝试启动" else "打开运行器") }
+        Button(onClick = { actions.launch(game) }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Outlined.PlayArrow, null); Text("启动方式") }
         if (game.platform in listOf("WINDOWS", "XP3")) Text("在运行器内选择游戏。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (game.platform == "VITA") Text("请先在 Vita3K 安装该标题。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text("诊断", style = MaterialTheme.typography.titleSmall)
@@ -214,12 +215,15 @@ private fun Library(state: HubState, onSelect: (GameItem) -> Unit, favorite: (Ga
                         Box(Modifier.size(44.dp).clip(RoundedCornerShape(14.dp)).background((platformColors[runner.platform] ?: Color.Gray).copy(alpha = 0.15f)), contentAlignment = Alignment.Center) { Icon(Icons.Outlined.SportsEsports, null, tint = platformColors[runner.platform] ?: Color.Gray) }
                         Column(Modifier.weight(1f).padding(start = 12.dp)) { Text(runner.name, fontWeight = FontWeight.SemiBold, fontSize = 18.sp); Text("${platformNames[runner.platform]} · ${runner.version?.let { "已安装 $it" } ?: "未安装"}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                     }
-                    if (runner.status.isNotBlank() && runner.status != "按需下载 · 未内置运行器") Text(if (runner.ready) "安装包已就绪" else if (runner.status.startsWith("下载或校验失败")) "下载失败，点击详情查看。" else runner.status, fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+                    if (runner.localApp != null) { Text("本机应用", style = MaterialTheme.typography.labelSmall); Text(runner.localApp, style = MaterialTheme.typography.bodySmall, translated = false) }
+                    if (runner.status.isNotBlank() && runner.status != "按需下载 · 未内置运行器") Text(if (runner.ready) "安装包已就绪" else runner.status, fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
                     if (runner.busy) { if (runner.progress != null) LinearProgressIndicator(progress = { runner.progress }, modifier = Modifier.fillMaxWidth()) else LinearProgressIndicator(Modifier.fillMaxWidth()) }
                     FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         if (runner.busy) OutlinedButton(onClick = { actions.cancelDownload(runner.id) }) { Text("取消下载") }
-                        else Button(onClick = { actions.install(runner.id) }) { Icon(if (runner.ready) Icons.Outlined.InstallMobile else Icons.Outlined.Download, null, Modifier.size(17.dp)); Text(if (runner.ready) "继续安装" else if (runner.version != null) "检查更新" else "一键安装") }
-                        if (runner.version != null) OutlinedButton(onClick = { actions.openRunner(runner.id) }) { Text("打开") }
+                        else Button(onClick = { actions.install(runner.id) }) { Icon(if (runner.ready) Icons.Outlined.InstallMobile else Icons.Outlined.Download, null, Modifier.size(17.dp)); Text(if (runner.ready) "继续安装" else if (runner.version != null) "检查更新" else "下载安装") }
+                        if (runner.localApp != null) OutlinedButton(onClick = { actions.openRunner(runner.id) }) { Text("打开") }
+                        OutlinedButton(onClick = { actions.chooseLocal(runner.platform) }) { Text("选择本机应用") }
+                        if (!runner.busy) TextButton(onClick = { actions.localApk(runner.id) }) { Text("本地 APK") }
                         TextButton(onClick = { actions.official(runner.id) }) { Text("上游") }
                         IconButton(onClick = { runnerInfo = runner }) { Icon(Icons.Outlined.Info, "详情", Modifier.size(19.dp)) }
                     }

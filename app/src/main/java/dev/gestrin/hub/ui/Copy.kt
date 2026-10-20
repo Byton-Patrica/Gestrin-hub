@@ -8,6 +8,27 @@ import java.util.Locale
 object AppText {
     fun language(context: Context): String = context.getSharedPreferences("hub", 0).getString("language", "zh") ?: "zh"
     val english = mapOf(
+        "无法读取本机应用，请稍后重试。" to "Cannot read installed apps. Try again later.",
+        "官方 Kirikiroid2 1.3.9 面向 API 11，Android 14 及以上无法新安装。请绑定兼容的本机应用，或导入已适配系统的 APK。" to "Official Kirikiroid2 1.3.9 targets API 11; Android 14+ blocks new installation. Bind a compatible installed app or import an updated APK.",
+        "官方 1.3.9 面向 API 11，Android 14 及以上不能新安装。请绑定兼容的本机应用，或选择已适配系统的本地 APK。" to "Official 1.3.9 targets API 11 and cannot be newly installed on Android 14+. Bind a compatible installed app or select an updated local APK.",
+        "本地 APK 已检查身份与设备要求；发布者哈希未验证" to "Local APK identity and device requirements checked; publisher hash unverified",
+        "启动方式" to "Launch options", "启动结果" to "Launch result", "运行器入口" to "Runner entry",
+        "本机应用" to "Local app", "下载安装" to "Download and install", "本地 APK" to "Local APK",
+        "选择本机应用" to "Choose installed app", "搜索应用" to "Search apps", "清除绑定" to "Clear binding",
+        "尚未选择本机运行器" to "No local runner selected",
+        "交接只发送启动请求，不代表游戏运行成功。" to "A handoff sends a request; it does not confirm that the game runs.",
+        "交给已选运行器" to "Send to selected runner", "选择接收此文件的应用" to "Choose app for this file",
+        "仅打开本地运行器" to "Open local runner only",
+        "此项目需在运行器内选择游戏；不会自动跳转。" to "Select this game inside the runner. No automatic redirect.",
+        "仅建立平台关联，不会立即启动；应用需自行支持游戏格式。" to "This binds the platform without launching. The app must support the game format.",
+        "未找到可启动的本机应用" to "No launchable installed apps found",
+        "所选应用已不可用，请重新选择。" to "The app is no longer available. Select it again.",
+        "该应用没有已验证的 Vita 标题启动接口，请在运行器内选择游戏。" to "This app has no verified Vita title API. Select the game inside it.",
+        "该项目没有已验证的直接启动接口，请明确选择打开本地运行器，再在其中选择游戏。" to "No verified direct launch API. Choose to open the local runner and select the game there.",
+        "已请求交接文件；若返回主页或无响应，请使用本地运行器手动选择游戏。" to "File handoff requested. If it returns home or does nothing, select the game inside the local runner.",
+        "没有应用声明接收此文件。可绑定本机运行器，在其中选择游戏。" to "No app declares support for this file. Bind a local runner and select the game inside it.",
+        "已打开系统应用选择器；选择或取消不代表游戏启动成功。" to "System app chooser opened. Selecting or cancelling does not confirm game launch.",
+        "仅打开运行器，请在其中选择游戏。" to "Runner opened only. Select the game inside it.",
         "游戏库" to "Library", "运行器" to "Runners", "设置" to "Settings",
         "添加游戏" to "Add game", "暂无游戏" to "No games", "没有匹配的游戏" to "No matches",
         "搜索游戏" to "Search games", "全部" to "All", "我的收藏" to "Favorites", "游戏仓库" to "Games",
@@ -154,7 +175,7 @@ object AppText {
         for ((regex, format, key) in templates) {
             val match = regex.matchEntire(value) ?: continue
             // Raw game titles, paths, IDs and log excerpts are never recursively translated.
-            val translateArguments = key in setOf("依据：%s", "建议：%s", "安装包已就绪 · %s")
+            val translateArguments = key in setOf("依据：%s", "建议：%s", "安装包已就绪 · %s", "下载或校验失败：%s")
             val args = match.groupValues.drop(1).map { if (translateArguments) renderEnglish(it) else it }.toTypedArray()
             return String.format(Locale.ENGLISH, format, *args)
         }

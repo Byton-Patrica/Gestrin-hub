@@ -73,7 +73,7 @@ class RunnerSecurityTest {
         assertEquals(RunnerId.entries.toSet(), Catalog.runners.map { it.id }.toSet())
         assertEquals(5, Catalog.runners.size)
         assertEquals(setOf("com.winlator"), Catalog.get(RunnerId.WINLATOR).expectedPackages)
-        assertEquals(setOf("org.tvp.kirikiri2"), Catalog.get(RunnerId.KIRIKIROID2).expectedPackages)
+        assertEquals(setOf("org.tvp.kirikiri2", "org.tvp.kirikiri2_free_10309"), Catalog.get(RunnerId.KIRIKIROID2).expectedPackages)
         assertEquals(setOf("org.ppsspp.ppsspp"), Catalog.get(RunnerId.PPSSPP).expectedPackages)
         assertEquals(setOf("org.vita3k.emulator"), Catalog.get(RunnerId.VITA3K).expectedPackages)
         assertFalse("com.miHoYo.Yuanshen" in Catalog.get(RunnerId.EDEN).expectedPackages)

@@ -1,3 +1,15 @@
+# 0.1.0-preview.3
+
+2026-10-20 · versionCode 3 · Android 8.0+
+
+- Fix the official Kirikiroid2 1.3.9 package allowlist; explain its target-API block on modern Android before downloading again.
+- Support installed app bindings, Android's file app chooser, and verified local APK imports without Hub network downloads.
+- Replace automatic home-screen fallback with explicit launch options and persistent outcome dialogs.
+- Accept bounded unknown-length downloads and queue stable publisher URLs instead of short-lived CDN links.
+- Chinese/English copy for the new flows. See [fix details](docs/10-runner-fixes.md).
+
+中文：修正官方 Kirikiroid2 包名并提前说明旧 target SDK 限制；支持本机应用绑定与本地 APK 安装；取消无效的自动跳转，改用明确的启动方式；修复未知下载长度及短期 CDN URL 问题。未宣称在 Android 16 真机上完成游戏兼容验证。
+
 # 0.1.0-preview.2
 
 2026-10-19 · versionCode 2 · Android 8.0+。

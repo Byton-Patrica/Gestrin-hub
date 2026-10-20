@@ -74,8 +74,13 @@ class HubViewModel(app: Application) : AndroidViewModel(app) {
         val game = repo.getGame(item.id) ?: return@task
         val result = if (game.platform == "VITA" && item.titleId.isNotBlank()) launcher.launchVita(item.titleId, game.title, packageName) else launcher.launch(game, packageName)
         if (result.handedOff) repo.markOpened(game.id, packageName)
-        tell(result.message)
+        dialog.value = "启动结果" to result.message
     }
+    fun chooseFile(item: GameItem) = task {
+        val game = repo.getGame(item.id) ?: return@task
+        dialog.value = "启动结果" to launcher.chooseFile(game).message
+    }
+    fun openRunner(packageName: String) = task { dialog.value = "运行器入口" to launcher.openRunner(packageName).message }
     fun record(item: GameItem, label: String, runner: String?, version: String?) = task {
         val outcome = when(label) { "无法启动" -> SessionOutcome.FAILED_TO_START; "能启动" -> SessionOutcome.STARTED; else -> SessionOutcome.PLAYABLE }
         val id = repo.markOpened(item.id, runner)

@@ -65,7 +65,7 @@ sealed interface InstallAction {
  * close cancels resolution only; DownloadManager survives process death and is recovered by refresh.
  *
  * DownloadManager has no per-request hard byte limit or redirect interception API. We check
- * every preflight redirect and declared size, enqueue the checked HTTPS CDN URL, stop oversized
+ * every preflight redirect and declared size, enqueue the stable publisher URL, stop oversized
  * transfers when polled, and enforce the cap again before copying/using any completed file.
  * The system download service controls subsequent redirects and background transfer behavior.
  */
@@ -101,6 +101,45 @@ class Installer(context: Context) {
     suspend fun retry(id: RunnerId) {
         cancel(id)
         download(id)
+    }
+
+    /** A user-selected standalone APK follows the same size, ABI, identity and signer checks. */
+    suspend fun importApk(id: RunnerId, uri: Uri): Unit = withContext(Dispatchers.IO) {
+        require(uri.scheme == "content") { "Select a local APK through the system file picker" }
+        cancel(id)
+        mutex.withLock {
+            val record = Record(UUID.randomUUID().toString(), RunnerState(phase = RunnerPhase.VERIFYING, releaseName = "Local APK"))
+            update(id, record)
+            val target = packageFile(id, record.token)
+            try {
+                target.parentFile!!.mkdirs()
+                app.contentResolver.openInputStream(uri)?.use { input ->
+                    target.outputStream().use { output ->
+                        val buffer = ByteArray(64 * 1024)
+                        var total = 0L
+                        while (true) {
+                            currentCoroutineContext().ensureActive()
+                            val count = input.read(buffer)
+                            if (count < 0) break
+                            total += count
+                            if (total > RunnerSecurity.MAX_APK_BYTES) throw IOException("APK exceeds size limit")
+                            output.write(buffer, 0, count)
+                        }
+                        output.fd.sync()
+                    }
+                } ?: throw IOException("Cannot read selected APK")
+                val hash = hashFile(target, target.length())
+                val info = validateArchive(id, target, allowLocalPackage = true)
+                update(id, record.copy(localSource = true, expectedSize = target.length(), state = record.state.copy(
+                    phase = RunnerPhase.READY, downloadedBytes = target.length(), totalBytes = target.length(),
+                    packageName = info.packageName, computedSha256 = hash, hashStatus = "Local APK; publisher hash not verified"
+                )))
+            } catch (e: Exception) {
+                target.delete()
+                fail(id, e)
+                throw e
+            }
+        }
     }
 
     suspend fun cancel(id: RunnerId): Unit = withContext(Dispatchers.IO) {
@@ -141,7 +180,7 @@ class Installer(context: Context) {
                 val file = packageFile(id, record.token)
                 val hash = hashFile(file, record.expectedSize)
                 if (hash != record.state.computedSha256) throw IOException("APK changed since verification; download it again")
-                val info = validateArchive(id, file)
+                val info = validateArchive(id, file, allowLocalPackage = record.localSource)
                 if (info.packageName != record.state.packageName) throw IOException("APK package changed since verification")
                 if (!app.packageManager.canRequestPackageInstalls()) {
                     return@withLock InstallAction.UnknownSources(
@@ -196,6 +235,8 @@ class Installer(context: Context) {
                 val destination = downloadFile(id, token)
                 if (!destination.parentFile!!.isDirectory && !destination.parentFile!!.mkdirs()) throw IOException("Cannot create download directory")
                 val request = DownloadManager.Request(Uri.parse(apk.url))
+                    .addRequestHeader("User-Agent", "GestrinHub/0.1 Android")
+                    .addRequestHeader("Accept", "application/octet-stream, */*")
                     .setTitle("${Catalog.get(id).name} ${apk.releaseName}")
                     .setDescription("User-requested runner download from the official project")
                     .setMimeType("application/octet-stream")
@@ -279,12 +320,13 @@ class Installer(context: Context) {
 
     private suspend fun verifyDownload(id: RunnerId, record: Record) {
         val source = downloadFile(id, record.token)
+        val expectedSize = RunnerSecurity.completedSize(record.expectedSize, source.length())
         val target = packageFile(id, record.token)
         val temporary = File(target.parentFile, "${target.name}.tmp")
         if (!target.parentFile!!.isDirectory && !target.parentFile!!.mkdirs()) throw IOException("Cannot create private package directory")
         try {
             RunnerSecurity.checkSize(source.length())
-            if (source.length() != record.expectedSize) throw IOException("Downloaded APK size does not match approved size")
+            if (source.length() != expectedSize) throw IOException("Downloaded APK size does not match approved size")
             source.inputStream().use { input ->
                 temporary.outputStream().use { output ->
                     val buffer = ByteArray(64 * 1024)
@@ -294,18 +336,18 @@ class Installer(context: Context) {
                         val count = input.read(buffer)
                         if (count < 0) break
                         countTotal += count
-                        if (countTotal > record.expectedSize || countTotal > RunnerSecurity.MAX_APK_BYTES) throw IOException("APK grew beyond the approved size")
+                        if (countTotal > expectedSize || countTotal > RunnerSecurity.MAX_APK_BYTES) throw IOException("APK grew beyond the approved size")
                         output.write(buffer, 0, count)
                     }
                     output.fd.sync()
                 }
             }
-            val hash = hashFile(temporary, record.expectedSize)
+            val hash = hashFile(temporary, expectedSize)
             if (record.expectedHash != null && hash != record.expectedHash) throw IOException("SHA-256 mismatch with the official publisher checksum")
             val archive = validateArchive(id, temporary)
             if (!temporary.renameTo(target)) throw IOException("Cannot finalize validated APK")
             val verified = record.expectedHash != null
-            update(id, record.copy(state = record.state.copy(
+            update(id, record.copy(expectedSize = expectedSize, state = record.state.copy(
                 phase = RunnerPhase.READY, downloadedBytes = target.length(), totalBytes = target.length(),
                 packageName = archive.packageName, computedSha256 = hash, hashVerified = verified,
                 hashStatus = if (verified) "SHA-256 verified against the official publisher checksum"
@@ -340,14 +382,16 @@ class Installer(context: Context) {
     }
 
     @Suppress("DEPRECATION")
-    private fun validateArchive(id: RunnerId, file: File): PackageInfo {
+    private fun validateArchive(id: RunnerId, file: File, allowLocalPackage: Boolean = false): PackageInfo {
         val pm = app.packageManager
         val flags = if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES
         val archive = pm.getPackageArchiveInfo(file.absolutePath, flags) ?: throw IOException("File is not a readable signed Android APK")
-        if (archive.packageName !in Catalog.get(id).expectedPackages) throw IOException("Unexpected APK package: ${archive.packageName}")
+        if (!allowLocalPackage && archive.packageName !in Catalog.get(id).expectedPackages) throw IOException("Unexpected APK package: ${archive.packageName}")
         if (!archive.splitNames.isNullOrEmpty()) throw IOException("Split APKs are not supported")
         val appInfo = archive.applicationInfo ?: throw IOException("APK has no application metadata")
         if (appInfo.minSdkVersion > Build.VERSION.SDK_INT) throw IOException("APK requires Android API ${appInfo.minSdkVersion}; device is API ${Build.VERSION.SDK_INT}")
+        val minimumTarget = RunnerSecurity.minimumTarget(Build.VERSION.SDK_INT)
+        if (appInfo.targetSdkVersion < minimumTarget) throw IOException("Android blocks this legacy APK (target ${appInfo.targetSdkVersion}, required $minimumTarget). Select a maintained build or an already installed runner.")
         val signer = signers(archive)
         if (signer.isEmpty()) throw IOException("APK has no readable signing certificate")
         ZipFile(file).use { zip ->
@@ -413,7 +457,7 @@ class Installer(context: Context) {
 
     private fun update(id: RunnerId, record: Record) {
         val json = JSONObject().apply {
-            put("token", record.token); put("expectedSize", record.expectedSize); put("expectedHash", record.expectedHash)
+            put("token", record.token); put("expectedSize", record.expectedSize); put("expectedHash", record.expectedHash); put("localSource", record.localSource)
             val s = record.state
             put("phase", s.phase.name); put("downloadId", s.downloadId); put("downloadedBytes", s.downloadedBytes)
             put("totalBytes", s.totalBytes); put("releaseName", s.releaseName); put("assetName", s.assetName)
@@ -440,7 +484,7 @@ class Installer(context: Context) {
                 releaseName = optional("releaseName"), assetName = optional("assetName"), packageName = optional("packageName"),
                 computedSha256 = optional("computedSha256"), hashVerified = json.optBoolean("hashVerified"),
                 hashStatus = json.optString("hashStatus", "Not checked"), error = optional("error"),
-            ), json.optLong("expectedSize", -1), hash)
+            ), json.optLong("expectedSize", -1), hash, json.optBoolean("localSource", false))
         } catch (e: Exception) {
             Record(state = RunnerState(phase = RunnerPhase.FAILED, error = "Cannot restore runner download: ${message(e)}"))
         }
@@ -451,6 +495,7 @@ class Installer(context: Context) {
         val state: RunnerState = RunnerState(),
         val expectedSize: Long = -1,
         val expectedHash: String? = null,
+        val localSource: Boolean = false,
     )
 
     private fun pauseReason(reason: Int): String = when (reason) {

@@ -4,10 +4,11 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <queries>
         <intent><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent>
-        <intent><action android:name="android.intent.action.VIEW" /><data android:scheme="content" android:mimeType="application/octet-stream" /></intent>
+        <intent><action android:name="android.intent.action.VIEW" /><data android:scheme="content" android:mimeType="*/*" /></intent>
         <intent><action android:name="android.intent.action.INSTALL_PACKAGE" /><data android:scheme="content" android:mimeType="application/vnd.android.package-archive" /></intent>
         <package android:name="com.winlator" />
         <package android:name="org.tvp.kirikiri2" />
+        <package android:name="org.tvp.kirikiri2_free_10309" />
         <package android:name="org.ppsspp.ppsspp" />
         <package android:name="org.vita3k.emulator" />
         <package android:name="dev.eden.eden_emulator" />
